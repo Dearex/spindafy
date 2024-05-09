@@ -39,7 +39,7 @@ TEMP_DATA_PATH = "temp_files"
 RESIZE_FACTOR = 0.25
 # Only calculate every STEP_MULTIPLIER dot Value. At 1 there are 1021 Dots that each sub-image will be tested again (Duplicates will automatically be removed)
 STEP_MULTIPLIER = 1
-# Max amout of cached sub-images. Not rolling! Buffer size is checked every (2**18)//SHARE_BUFFER_SIZE frames
+# Max amout of cached sub-images. Not rolling! Buffer size is checked every ((2**18)//SHARE_BUFFER_SIZE)*(16//resolution) frames
 SHARE_BUFFER_SIZE = 2000
 # Probably no need to be touched. Resolution up to which a shared dict will be used. Performance might depend on System. At higher resolutions the shaing costs more cpu than saved
 SHARE_THRESHOLD = 16
@@ -141,101 +141,60 @@ def calculate_score(image1:Image.Image, image2:Image.Image, tri_color):
                         score -= 1
                         shiny_score -= 1
         return score, shiny_score
-        
-def convert_to_spinda(i, spinda_images, image_input, output, resolution, calculated, tri_color, calculated_shiny={}):
-    if not tri_color:
-        last_time = datetime.now()
+
+def convert_to_spinda(i, spinda_images, image_input: str | Image.Image, output, resolution, calculated, tri_color, calculated_shiny={}):
+    last_time = datetime.now()
+    if isinstance(image_input, str):
         img = Image.open(image_input)
-        width, height = img.size
-        img = img.resize([int(resolution*SPINDA_GAP), int(resolution*SPINDA_GAP*(height/width))])
-        img = ImageOps.grayscale(img)
-        img = img.point(lambda x: 0 if x < BI_THRESHOLD else 255, '1')
-        img = img.convert("RGBA")
-        width, height = img.size
-        img_out = Image.new("RGB", img.size, (0, 0, 0))
-
-        square_counter = 0
-        calculated_counter = 0
-        image_squares = []
-
-        for y in range(0, height, SPINDA_GAP):
-            for x in range(0, width, SPINDA_GAP):
-                box = (x, y, x + SPINDA_SIZE, y + SPINDA_SIZE)
-                image_squares.append(box)
-
-        for box in image_squares:
-            x, y, _, _ = box
-            square = img.crop(box)
-            new = Image.new("L", square.size, 0)
-            new.paste(square, None, mask_image)
-            square = new
-            square = square.resize([int(square.size[0]*RESIZE_FACTOR), int(square.size[1]*RESIZE_FACTOR)])
-            square = square.point(lambda x: 0 if x < BI_THRESHOLD else 255, '1')
-            square = square.convert("RGBA")
-            square_hash = square.convert("1").tobytes().hex()
-
-            if square_hash in calculated.keys():
-                best_spinda = calculated[square_hash]
-            else:
-                # Each spot gets separatly calculated for best effect, best spots get combined. TODO: Add check for overlapping Dots
-                best_spinda = 0x00000000
-                for ranges in SPOT_RANGES:
-                    best_spot = 0x0
-                    best_score = - math.inf
-                    for i in range(ranges[0], ranges[1], ranges[2]):
-                        if os.path.exists(os.path.join(TEMP_DATA_PATH, str(SPOT_RANGES.index(ranges)), f'{num_to_fixed_size_hex(i)}.png')):
-                            score = calculate_score(square, spinda_images[num_to_fixed_size_hex(i)], tri_color)
-                            if score > best_score:
-                                best_score = score
-                                best_spot = i
-                    best_spinda = best_spinda ^ best_spot
-                calculated[square_hash] = best_spinda
-                calculated_counter += 1
-            spinda = SpindaConfig.from_personality(best_spinda)
-            bs_image = spinda.render_pattern()
-            img_out.paste(bs_image, [x-SPINDA_SIZE//2, y-SPINDA_SIZE//2], mask=bs_image)
-            square_counter += 1
-            # print(f'{square_counter} of {spinda_pixels}', end='\r')
-        img_out.save(output)
-        print(f'{datetime.now()} Image {image_input} done, calculated {calculated_counter} of {square_counter} squares in {datetime.now() - last_time}')
+    elif isinstance(image_input, Image.Image):
+        img = image_input
     else:
-        last_time = datetime.now()
-        img = Image.open(image_input)
-        width,height  = img.size
-        img = img.resize([int(resolution*SPINDA_GAP), int(resolution*SPINDA_GAP*(height/width))])
-        img = ImageOps.grayscale(img)
+        raise ValueError("Please provide a string path or a PIL.Image.Image")
+    width, height = img.size
+    img = img.resize([int(resolution*SPINDA_GAP), int(resolution*SPINDA_GAP*(height/width))])
+    width, height = img.size
+    img = ImageOps.grayscale(img)
+
+    square_counter = 0
+    calculated_counter = 0
+    image_squares = []
+
+    for y in range(0, height, SPINDA_GAP):
+        for x in range(0, width, SPINDA_GAP):
+            box = (x, y, x + SPINDA_SIZE, y + SPINDA_SIZE)
+            image_squares.append(box)
+
+    if tri_color:
         img = img.point(lambda x: 0 if x < TRI_THRESHOLD_LOW else 128 if x < TRI_THRESHOLD_HIGH else 255, 'L')
-        img = img.convert("RGBA")
-        width, height = img.size
-        img_out = Image.new("RGB", img.size, (0, 0, 0))
+    else:
+        img = img.point(lambda x: 0 if x < BI_THRESHOLD else 255, '1')
 
-        square_counter = 0
-        calculated_counter = 0
-        image_squares = []
+    img = img.convert("RGBA")
+    img_out = Image.new("RGB", img.size, (0, 0, 0))
 
-        for y in range(0, height, SPINDA_GAP):
-            for x in range(0, width, SPINDA_GAP):
-                box = (x, y, x + SPINDA_SIZE, y + SPINDA_SIZE)
-                image_squares.append(box)
+    for box in image_squares:
+        x, y, _, _ = box
+        square = img.crop(box)
+        new = Image.new("L", square.size, 0)
+        new.paste(square, None, mask_image)
+        square = new
+        square = square.resize([int(square.size[0]*RESIZE_FACTOR), int(square.size[1]*RESIZE_FACTOR)])
 
-        for box in image_squares:
-            x, y, _, _ = box
-            square = img.crop(box)
-            new = Image.new("L", square.size, 0)
-            new.paste(square, None, mask_image)
-            square = new
-            square = square.resize([int(square.size[0]*RESIZE_FACTOR), int(square.size[1]*RESIZE_FACTOR)])
+        if tri_color:
             square = square.point(lambda x: 0 if x < TRI_THRESHOLD_LOW else 128 if x < TRI_THRESHOLD_HIGH else 255, 'L')
-            square = square.convert("RGBA")
-            square_hash = square.convert("1").tobytes().hex()
-            
+        else:
+            square = square.point(lambda x: 0 if x < BI_THRESHOLD else 255, '1')
+        square = square.convert("RGBA")
+        square_hash = square.convert("1").tobytes().hex()
+
+        # Each spot gets separatly calculated for best effect, best spots get combined. TODO: Add check for overlapping Dots
+        if tri_color:
             if square_hash in calculated.keys() and square_hash in calculated_shiny.keys():
                 if (best_spinda_score:=calculated[square_hash][1]) < (best_spinda_score_shiny:=calculated_shiny[square_hash][1]):
                     best_spinda_shiny = calculated_shiny[square_hash][0]
                 else:
                     best_spinda = calculated[square_hash][0]
             else:
-                # Each spot gets separatly calculated for best effect, best spots get combined. TODO: Add check for overlapping Dots
                 best_spinda = 0x00000000
                 best_spinda_score = 0
                 best_spinda_shiny = 0x00000000
@@ -267,12 +226,30 @@ def convert_to_spinda(i, spinda_images, image_input, output, resolution, calcula
             else:
                 spinda = SpindaConfig.from_personality(best_spinda)
                 bs_image = spinda.render_pattern()
-            img_out.paste(bs_image, [x-SPINDA_SIZE//2, y-SPINDA_SIZE//2], mask=bs_image)
-            square_counter += 1
-            # print(f'{square_counter} of {spinda_pixels}', end='\r')
-        img_out = img_out.resize((width, height))
-        img_out.save(output)
-        print(f'{datetime.now()} Image {image_input} done, calculated {calculated_counter} of {square_counter} squares in {datetime.now() - last_time}')
+        else: 
+            if square_hash in calculated.keys():
+                best_spinda = calculated[square_hash]
+            else:
+                best_spinda = 0x00000000
+                for ranges in SPOT_RANGES:
+                    best_spot = 0x0
+                    best_score = - math.inf
+                    for i in range(ranges[0], ranges[1], ranges[2]):
+                        if os.path.exists(os.path.join(TEMP_DATA_PATH, str(SPOT_RANGES.index(ranges)), f'{num_to_fixed_size_hex(i)}.png')):
+                            score = calculate_score(square, spinda_images[num_to_fixed_size_hex(i)], tri_color)
+                            if score > best_score:
+                                best_score = score
+                                best_spot = i
+                    best_spinda = best_spinda ^ best_spot
+                calculated[square_hash] = best_spinda
+                calculated_counter += 1
+            spinda = SpindaConfig.from_personality(best_spinda)
+            bs_image = spinda.render_pattern()
+        img_out.paste(bs_image, [x-SPINDA_SIZE//2, y-SPINDA_SIZE//2], mask=bs_image)
+        square_counter += 1
+        # print(f'{square_counter} of {spinda_pixels}', end='\r')
+    img_out.save(output)
+    print(f'{datetime.now()} Image {image_input} done, calculated {calculated_counter} of {square_counter} squares in {datetime.now() - last_time}')
 
 def split_mp4_to_images(video_path, output_folder):
     vidcap = cv2.VideoCapture(video_path)
@@ -309,7 +286,7 @@ def handle_video(spinda_images, input_file, output_file, resolution, tri_color, 
         if keep_rendered_frames:            
             for rendered_frame in os.listdir(edit_video_path):
                 frames.remove(rendered_frame)
-        frame_share_size = (2**18)//SHARE_BUFFER_SIZE
+        frame_share_size = ((2**18)//SHARE_BUFFER_SIZE)*(16//resolution)
         frame_batches = [frames[i:i+frame_share_size] for i in range(0, len(frames), frame_share_size)]
         print(f'{datetime.now()} {len(frames)} frames need to be rendered, {len(frame_batches)} batches of size {len(frame_batches[0])}')
         
