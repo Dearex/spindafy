@@ -8,6 +8,7 @@ How to use:
 Modules to install:
 - Pillow
 - moviepy
+- opencv-python  
 
 Currently the output video has no sound. Sound can be added with ffmpeg:
  ffmpeg -i test_output.mp4 -i audio.mp3 -map 0 -map 1:a -c:v copy -shortest output_with_sound.mp4
